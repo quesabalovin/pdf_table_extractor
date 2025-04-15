@@ -1,0 +1,8 @@
+streamlit
+pandas
+camelot-py[cv]
+openpyxl
+pyyaml
+langdetect
+deep_translator
+streamlit-authenticator>=0.2.2
