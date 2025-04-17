@@ -1,7 +1,7 @@
 # credentials.py
 
 USERS = {
-    "tableextractorfreetrial@loq": {"password": "trialpass", "credits": 0},
+    "freetrial@example.com": {"password": "trialpass", "credits": 0},
     "tableextractorizexpt@loq": {"password": "ov08c2ct", "credits": 100},
     "tableextractorbtqh72@loq": {"password": "7infr6v9", "credits": 100},
     "tableextractor7sxh7k@loq": {"password": "oyfkdmbo", "credits": 100},
