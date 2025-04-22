@@ -9,8 +9,9 @@ from openpyxl.styles import Alignment
 import json
 import os
 from datetime import datetime
-from credentials import USERS
 
+# === File Constants ===
+CREDENTIALS_FILE = "credentials.json"
 CREDIT_FILE = "credits.json"
 TRIAL_FILE = "trial_users.json"
 TRIAL_DAILY_LIMIT = 20
@@ -27,6 +28,12 @@ def save_json(filename, data):
     with open(filename, "w") as f:
         json.dump(data, f, indent=2)
 
+# === Load Users ===
+def load_users():
+    return load_json(CREDENTIALS_FILE)
+
+USERS = load_users()
+
 # === Login ===
 def login():
     st.set_page_config(page_title="PDF Extractor Login", layout="centered")
@@ -42,6 +49,8 @@ def login():
             submitted = st.form_submit_button("Log In")
 
             if submitted:
+                USERS = load_users()  # Reload USERS in case updated dynamically
+
                 if email in USERS and USERS[email]["password"] == password:
                     st.session_state.logged_in = True
                     st.session_state.user_email = email
@@ -64,7 +73,7 @@ def login():
                     else:
                         credit_data = load_json(CREDIT_FILE)
                         if email not in credit_data:
-                            credit_data[email] = USERS[email]["credits"]
+                            credit_data[email] = USERS[email].get("credits", 10)
                             save_json(CREDIT_FILE, credit_data)
                         st.session_state.user_credits = credit_data[email]
 
