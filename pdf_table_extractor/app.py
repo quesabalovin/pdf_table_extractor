@@ -11,7 +11,7 @@ import os
 from datetime import datetime
 
 # === File Constants ===
-CREDENTIALS_FILE = "credentials.json"
+CREDENTIALS_FILE = os.path.join(os.path.dirname(__file__), "credentials.json")
 CREDIT_FILE = "credits.json"
 TRIAL_FILE = "trial_users.json"
 TRIAL_DAILY_LIMIT = 20
