@@ -1,4 +1,4 @@
-# app.py (v3.3 - Fixed Syntax in Sheet Naming)
+# app.py (v3.4 - Fixed Nested Try Syntax)
 import streamlit as st
 import pandas as pd
 import camelot
@@ -39,7 +39,7 @@ st.set_page_config(
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [%(funcName)s] - %(message)s')
 
 # === Configuration Constants ===
-APP_VERSION = "3.3-SyntaxFix" # New version marker
+APP_VERSION = "3.4-SyntaxFix2" # New version marker
 APP_TITLE = "PDF Table Extractor Pro"
 SUPPORT_EMAIL = "lovinquesaba17@gmail.com"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -122,7 +122,7 @@ def authenticate_user_db(email: str, password: str) -> Optional[Dict[str, Any]]:
     except OperationalError as db_op_err: logging.error(f"DB OperationalError during auth for {email}: {db_op_err}", exc_info=True); st.error("Login failed: DB connection issue."); return None
     except Exception as e: logging.error(f"Unexpected error during DB auth for {email}: {e}", exc_info=True); st.error("Login failed: Server error."); return None
 
-# === Session Initialization (Handles DB credits OR JSON trial tracking) ===
+# === Session Initialization ===
 def initialize_user_session(user_data: Dict[str, Any]) -> bool:
     """Initializes Streamlit session state using DB data (for credits) and trial file."""
     try:
@@ -145,7 +145,7 @@ def initialize_user_session(user_data: Dict[str, Any]) -> bool:
         return True
     except Exception as e: logging.error(f"Session init error for {user_data.get('email', '??')}: {e}", exc_info=True); st.error("Session setup error."); return False
 
-# === Usage Update (Handles DB credits OR JSON trial tracking) ===
+# === Usage Update ===
 def update_usage_count(user_email: str, is_trial: bool) -> None:
     """Updates usage counts: Decrements credits in DB for paid users, increments uses in JSON for trial."""
     if not user_email:
@@ -180,18 +180,27 @@ def update_usage_count(user_email: str, is_trial: bool) -> None:
                     st.error("Error: Could not find user record to update credits.")
     except OperationalError as db_op_err:
          if not is_trial:
-              try: with db_config_app.app_context(): db.session.rollback()
+              try: # Attempt rollback safely
+                  with db_config_app.app_context(): db.session.rollback()
               except Exception as rb_err: logging.error(f"Rollback error: {rb_err}")
          logging.error(f"Database OperationalError during usage update for {user_email}: {db_op_err}", exc_info=True)
          st.error("⚠️ Error connecting to database while updating usage count.")
     except Exception as e:
+        # --- CORRECTED Nested Try/Except for Rollback ---
         if not is_trial:
-             try: with db_config_app.app_context(): db.session.rollback()
-             except Exception as rb_err: logging.error(f"Rollback error: {rb_err}")
+             try:
+                 # Indent the code inside the nested try
+                 with db_config_app.app_context():
+                     db.session.rollback()
+                     logging.info(f"Rollback attempted for {user_email} due to usage update error.") # Optional: log success
+             except Exception as rb_err:
+                 # Indent the code inside the nested except
+                 logging.error(f"Rollback attempt itself failed for {user_email}: {rb_err}")
+        # --- END CORRECTION ---
         logging.error(f"Failed to update usage count for {user_email} (Trial={is_trial}): {e}", exc_info=True)
         st.error("⚠️ An unexpected error occurred while updating usage count.")
 
-# === Login UI (Uses DB Auth) ===
+# === Login UI ===
 def display_login_form():
     if "logged_in" not in st.session_state: st.session_state.logged_in = False
     if st.session_state.logged_in: return True
@@ -323,38 +332,18 @@ if uploaded_file:
             total_tables = len(tables); status_placeholder.info(f"✅ Found {total_tables} tables. Preparing Excel..."); progress_bar.progress(0.1, text=f"Found {total_tables} tables...")
             output_buffer = BytesIO(); processed_sheets = []; table_counts_per_page = {}; has_content = False
 
-            # --- Table Processing Loop ---
             with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
-                for i, table in enumerate(tables):
+                for i, table in enumerate(tables): # Table Processing Loop
                     current_progress = 0.1 + 0.7 * ((i + 1) / total_tables); page_num = table.page; table_counts_per_page[page_num] = table_counts_per_page.get(page_num, 0) + 1; table_num_on_page = table_counts_per_page[page_num]
                     base_sheet_name = f"Page_{page_num}_Table_{table_num_on_page}"
-
-                    # *** CORRECTED Sheet Name Generation Loop ***
-                    sheet_name_candidate = base_sheet_name[:MAX_SHEET_NAME_LEN]
-                    count = 1
-                    temp_sheet_name = sheet_name_candidate # Start with the truncated base
-
-                    while temp_sheet_name.lower() in [name.lower() for name in processed_sheets]: # Case-insensitive check
-                        suffix = f"_{count}"
-                        max_base_len = MAX_SHEET_NAME_LEN - len(suffix)
-
-                        if max_base_len <= 0:
-                            # Safety fallback if suffix makes it too long
-                            temp_sheet_name = f"Sheet_Err_{i}" # Using the original script's fallback logic
-                            logging.warning(f"Sheet name fallback needed for base: {base_sheet_name} -> {temp_sheet_name}")
-                            break # Exit the while loop
-
-                        # Construct the new temporary name
-                        temp_sheet_name = base_sheet_name[:max_base_len] + suffix
-
-                        # Safety break for excessive loops
-                        count += 1
-                        if count > 100:
-                            logging.error(f"Could not generate unique sheet name for base '{base_sheet_name}' after 100 attempts.")
-                            temp_sheet_name = f"Sheet_Err_{i}" # Use fallback name
-                            break # Exit the while loop
-                    sheet_name = temp_sheet_name # Assign the final unique name
-                    # *** END CORRECTION ***
+                    # Sheet name generation loop (fixed in v3.3)
+                    sheet_name_candidate = base_sheet_name[:MAX_SHEET_NAME_LEN]; count = 1; temp_sheet_name = sheet_name_candidate
+                    while temp_sheet_name.lower() in [name.lower() for name in processed_sheets]:
+                        suffix = f"_{count}"; max_base_len = MAX_SHEET_NAME_LEN - len(suffix)
+                        if max_base_len <= 0: temp_sheet_name = f"Sheet_Err_{i}"; logging.warning(f"Sheet name fallback: {base_sheet_name} -> {temp_sheet_name}"); break
+                        temp_sheet_name = base_sheet_name[:max_base_len] + suffix; count += 1
+                        if count > 100: logging.error(f"Unique sheet name fail: '{base_sheet_name}'"); temp_sheet_name = f"Sheet_Err_{i}"; break
+                    sheet_name = temp_sheet_name
 
                     status_placeholder.info(f"⚙️ Processing {sheet_name} ({i+1}/{total_tables})..."); progress_bar.progress(current_progress, text=f"Processing {sheet_name}...")
                     df = table.df
@@ -368,7 +357,7 @@ if uploaded_file:
                     df.to_excel(writer, sheet_name=sheet_name, index=False); processed_sheets.append(sheet_name)
                 if not has_content: status_placeholder.warning("⚠️ No data extracted after cleaning."); st.stop()
 
-                # --- Excel Formatting (Dynamic width) ---
+                # Excel Formatting (Dynamic width)
                 progress_bar.progress(0.85, text="Formatting Excel..."); status_placeholder.info("🎨 Formatting..."); workbook = writer.book
                 for sheet_title in processed_sheets:
                     ws = workbook[sheet_title]
@@ -389,7 +378,7 @@ if uploaded_file:
             st.download_button( label=f"📥 Download ({len(processed_sheets)} Sheets)", data=output_buffer, file_name=download_filename, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="download_excel_button", use_container_width=True)
 
             # --- Usage Update Call ---
-            update_usage_count(user_email, is_trial)
+            update_usage_count(user_email, is_trial) # Calls the function defined earlier
             # --- End Usage Update Call ---
 
         # Error Handling
