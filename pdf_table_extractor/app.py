@@ -221,7 +221,7 @@ if uploaded_file:
 
     # --- Advanced Settings Expander ---
     with st.expander("🔧 Advanced PDF Parsing Settings (Optional)"):
-        st.markdown("Adjust these if default extraction results aren't perfect. Hover over (?) for details.")
+        st.markdown("Adjust if default extraction results have inconsistencies. Hover over (?) for details.")
         camelot_flavor = st.selectbox( "Parsing Method (Flavor)", ['stream', 'lattice'], index=0, help="'stream' uses whitespace (no lines needed). 'lattice' uses lines (requires borders).")
         c1, c2 = st.columns(2)
         # Add caption to explain when sliders apply
@@ -435,4 +435,4 @@ else:
 
 # --- Footer ---
 st.divider()
-st.caption("© {} PDF Table Extractor Pro | For support, contact lovinquesaba17@gmail.com".format(datetime.now().year))
+st.caption("© {} PDF Table Extractor Pro | For support, contact lovinquesaba17@gmail.com.".format(datetime.now().year))
