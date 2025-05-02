@@ -1,4 +1,4 @@
-# app.py (v3.2 - Restored update_usage_count)
+# app.py (v3.3 - Fixed Syntax in Sheet Naming)
 import streamlit as st
 import pandas as pd
 import camelot
@@ -39,7 +39,7 @@ st.set_page_config(
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [%(funcName)s] - %(message)s')
 
 # === Configuration Constants ===
-APP_VERSION = "3.2-UsageFix" # New version marker
+APP_VERSION = "3.3-SyntaxFix" # New version marker
 APP_TITLE = "PDF Table Extractor Pro"
 SUPPORT_EMAIL = "lovinquesaba17@gmail.com"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -145,8 +145,6 @@ def initialize_user_session(user_data: Dict[str, Any]) -> bool:
         return True
     except Exception as e: logging.error(f"Session init error for {user_data.get('email', '??')}: {e}", exc_info=True); st.error("Session setup error."); return False
 
-
-# *** ADDED FUNCTION DEFINITION BACK ***
 # === Usage Update (Handles DB credits OR JSON trial tracking) ===
 def update_usage_count(user_email: str, is_trial: bool) -> None:
     """Updates usage counts: Decrements credits in DB for paid users, increments uses in JSON for trial."""
@@ -155,27 +153,23 @@ def update_usage_count(user_email: str, is_trial: bool) -> None:
         st.error("Error recording usage: Session data missing."); return
     try:
         if is_trial:
-            # --- Update Trial JSON file ---
             current_uses = st.session_state.get("trial_uses_today", 0) + 1
-            st.session_state.trial_uses_today = current_uses # Update session state immediately
+            st.session_state.trial_uses_today = current_uses
             trial_data = load_json(TRIAL_FILE_PATH)
             user_trial_info = trial_data.get(user_email, {})
-            today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d") # Use UTC date
+            today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             user_trial_info.update({"uses": current_uses, "date": today_str})
             trial_data[user_email] = user_trial_info
             save_json(TRIAL_FILE_PATH, trial_data)
             logging.info(f"[Trial] Usage updated for {user_email}. Uses today: {current_uses}")
             st.toast(f"Trial use recorded ({current_uses}/{TRIAL_DAILY_LIMIT} today).", icon="⏳")
-            # --- ---
         else:
-            # --- Update Credits in Database ---
-            with db_config_app.app_context(): # Need context for DB operations
+            with db_config_app.app_context():
                 user = db.session.query(User).filter(db.func.lower(User.email) == user_email.lower()).first()
                 if user:
                     if user.credits > 0:
-                        user.credits -= 1
-                        db.session.commit() # Save the change
-                        st.session_state.credits = user.credits # Update session state
+                        user.credits -= 1; db.session.commit()
+                        st.session_state.credits = user.credits
                         logging.info(f"[Premium] Credit deducted for {user_email}. Remaining: {user.credits}")
                         st.toast("1 credit deducted.", icon="🪙")
                     else:
@@ -184,27 +178,21 @@ def update_usage_count(user_email: str, is_trial: bool) -> None:
                 else:
                     logging.error(f"Cannot update credits for {user_email}: User not found in database during usage update.")
                     st.error("Error: Could not find user record to update credits.")
-            # --- ---
     except OperationalError as db_op_err:
          if not is_trial:
-              try: # Attempt rollback safely
-                  with db_config_app.app_context(): db.session.rollback()
+              try: with db_config_app.app_context(): db.session.rollback()
               except Exception as rb_err: logging.error(f"Rollback error: {rb_err}")
          logging.error(f"Database OperationalError during usage update for {user_email}: {db_op_err}", exc_info=True)
          st.error("⚠️ Error connecting to database while updating usage count.")
     except Exception as e:
         if not is_trial:
-             try:
-                 with db_config_app.app_context(): db.session.rollback()
+             try: with db_config_app.app_context(): db.session.rollback()
              except Exception as rb_err: logging.error(f"Rollback error: {rb_err}")
         logging.error(f"Failed to update usage count for {user_email} (Trial={is_trial}): {e}", exc_info=True)
         st.error("⚠️ An unexpected error occurred while updating usage count.")
-# *** END ADDED FUNCTION DEFINITION ***
-
 
 # === Login UI (Uses DB Auth) ===
 def display_login_form():
-    # (Identical to v3.1 - no changes needed here)
     if "logged_in" not in st.session_state: st.session_state.logged_in = False
     if st.session_state.logged_in: return True
     try:
@@ -234,7 +222,6 @@ if not display_login_form(): st.stop()
 
 # === Sidebar UI ===
 with st.sidebar:
-    # (Identical to v3.1 - no changes needed here)
     st.title("⚙️ Account & Info"); st.divider(); user_email = st.session_state.get("user_email", "N/A"); st.write(f"👤 **User:** `{user_email}`")
     if st.session_state.get("is_trial_user", False):
         st.info("🧪 Free Trial Account Active", icon="🧪"); uses_today = st.session_state.get("trial_uses_today", 0); st.metric(label="Uses Today", value=f"{uses_today} / {TRIAL_DAILY_LIMIT}"); prog = uses_today / TRIAL_DAILY_LIMIT if TRIAL_DAILY_LIMIT > 0 else 0; st.progress(min(prog, 1.0))
@@ -251,7 +238,6 @@ with st.sidebar:
         st.session_state.logged_in = False; st.toast("Logged out.", icon="👋"); st.rerun()
     st.divider(); st.caption(f"App Version: {APP_VERSION}"); st.caption(f"Support: {SUPPORT_EMAIL}")
 
-
 # === Main App UI ===
 st.title("📄 PDF Table Extractor Pro")
 st.markdown("Effortlessly extract tables from PDF files to Excel. Translate content on the fly.")
@@ -263,8 +249,8 @@ uploaded_file = st.file_uploader("Click or drag to upload PDF.", type=["pdf"], k
 
 # === Main Processing Logic ===
 if uploaded_file:
-    # (Identical to v3.1 down to the *call* to update_usage_count)
     st.success(f"✅ File ready: '{uploaded_file.name}' ({uploaded_file.size / 1024:.1f} KB)"); st.divider()
+    # --- Step 2: Configure Options ---
     st.subheader("2. Configure Extraction Options"); col_pages, col_translate = st.columns(2)
     with col_pages:
         st.markdown("📄 **Page Selection**"); pages_to_process = st.text_input("Pages", "all", key="pages_input", help="E.g., '1,3,5-7' or 'all'.").strip()
@@ -285,6 +271,8 @@ if uploaded_file:
         with c1: edge_tolerance = st.slider("Edge Tol (Stream)", 0, 1000, 200, step=50, help="Page edge distance.")
         with c2: row_tolerance = st.slider( "Row Tol (Stream)", 0, 50, 10, step=1, help="Vertical text grouping.")
     st.divider()
+
+    # --- Step 3: Process ---
     st.subheader("3. Process and Download"); process_button_label = f"🚀 Extract '{pages_to_process}' Pages"
     if st.button(process_button_label, key="process_button", type="primary", use_container_width=True):
         process_allowed = True; user_email = st.session_state.get("user_email"); is_trial = st.session_state.get("is_trial_user", False)
@@ -335,12 +323,39 @@ if uploaded_file:
             total_tables = len(tables); status_placeholder.info(f"✅ Found {total_tables} tables. Preparing Excel..."); progress_bar.progress(0.1, text=f"Found {total_tables} tables...")
             output_buffer = BytesIO(); processed_sheets = []; table_counts_per_page = {}; has_content = False
 
+            # --- Table Processing Loop ---
             with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
-                for i, table in enumerate(tables): # Table Processing Loop
+                for i, table in enumerate(tables):
                     current_progress = 0.1 + 0.7 * ((i + 1) / total_tables); page_num = table.page; table_counts_per_page[page_num] = table_counts_per_page.get(page_num, 0) + 1; table_num_on_page = table_counts_per_page[page_num]
-                    base_sheet_name = f"Page_{page_num}_Table_{table_num_on_page}"; sheet_name = base_sheet_name[:MAX_SHEET_NAME_LEN]; count = 1; temp_sheet_name = sheet_name
-                    while temp_sheet_name in processed_sheets: suffix = f"_{count}"; max_len = MAX_SHEET_NAME_LEN - len(suffix); temp_sheet_name = base_sheet_name[:max_len] + suffix if max_len > 0 else f"Sheet_Err_{i}"; count += 1; if count > 100: temp_sheet_name = f"Sheet_Err_{i}"; break # Safety break
-                    sheet_name = temp_sheet_name
+                    base_sheet_name = f"Page_{page_num}_Table_{table_num_on_page}"
+
+                    # *** CORRECTED Sheet Name Generation Loop ***
+                    sheet_name_candidate = base_sheet_name[:MAX_SHEET_NAME_LEN]
+                    count = 1
+                    temp_sheet_name = sheet_name_candidate # Start with the truncated base
+
+                    while temp_sheet_name.lower() in [name.lower() for name in processed_sheets]: # Case-insensitive check
+                        suffix = f"_{count}"
+                        max_base_len = MAX_SHEET_NAME_LEN - len(suffix)
+
+                        if max_base_len <= 0:
+                            # Safety fallback if suffix makes it too long
+                            temp_sheet_name = f"Sheet_Err_{i}" # Using the original script's fallback logic
+                            logging.warning(f"Sheet name fallback needed for base: {base_sheet_name} -> {temp_sheet_name}")
+                            break # Exit the while loop
+
+                        # Construct the new temporary name
+                        temp_sheet_name = base_sheet_name[:max_base_len] + suffix
+
+                        # Safety break for excessive loops
+                        count += 1
+                        if count > 100:
+                            logging.error(f"Could not generate unique sheet name for base '{base_sheet_name}' after 100 attempts.")
+                            temp_sheet_name = f"Sheet_Err_{i}" # Use fallback name
+                            break # Exit the while loop
+                    sheet_name = temp_sheet_name # Assign the final unique name
+                    # *** END CORRECTION ***
+
                     status_placeholder.info(f"⚙️ Processing {sheet_name} ({i+1}/{total_tables})..."); progress_bar.progress(current_progress, text=f"Processing {sheet_name}...")
                     df = table.df
                     if df.empty: logging.info(f"Skip empty table: {sheet_name}"); continue
@@ -353,8 +368,9 @@ if uploaded_file:
                     df.to_excel(writer, sheet_name=sheet_name, index=False); processed_sheets.append(sheet_name)
                 if not has_content: status_placeholder.warning("⚠️ No data extracted after cleaning."); st.stop()
 
+                # --- Excel Formatting (Dynamic width) ---
                 progress_bar.progress(0.85, text="Formatting Excel..."); status_placeholder.info("🎨 Formatting..."); workbook = writer.book
-                for sheet_title in processed_sheets: # Excel Formatting Loop
+                for sheet_title in processed_sheets:
                     ws = workbook[sheet_title]
                     for row in ws.iter_rows():
                         for cell in row: cell.alignment = Alignment(wrap_text=True, vertical='top')
@@ -364,7 +380,7 @@ if uploaded_file:
                             try: cell_str = str(cell.value); length = max(len(line) for line in cell_str.split('\n')) if cell.value and isinstance(cell.value, str) and '\n' in cell_str else len(cell_str)
                             except: length = 0
                             if length > max_length: max_length = length
-                        adjusted_width = min(max((max_length + 2) * 1.1, 12), 60) # Dynamic width
+                        adjusted_width = min(max((max_length + 2) * 1.1, 12), 60)
                         try: ws.column_dimensions[column_letter].width = adjusted_width
                         except Exception as width_err: logging.warning(f"Width fail col {column_letter}: {width_err}")
 
@@ -373,7 +389,6 @@ if uploaded_file:
             st.download_button( label=f"📥 Download ({len(processed_sheets)} Sheets)", data=output_buffer, file_name=download_filename, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="download_excel_button", use_container_width=True)
 
             # --- Usage Update Call ---
-            # This now correctly calls the function defined earlier
             update_usage_count(user_email, is_trial)
             # --- End Usage Update Call ---
 
