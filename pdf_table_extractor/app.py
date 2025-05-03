@@ -1,4 +1,4 @@
-# app.py (v3.4 - Fixed Nested Try Syntax)
+# app.py (v3.4.1 - Stream Only)
 import streamlit as st
 import pandas as pd
 import camelot
@@ -37,9 +37,10 @@ st.set_page_config(
 
 # === Logging Setup ===
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [%(funcName)s] - %(message)s')
+log = logging.getLogger(__name__) # Use a named logger
 
 # === Configuration Constants ===
-APP_VERSION = "3.4-SyntaxFix2" # New version marker
+APP_VERSION = "3.4.1-StreamOnly" # New version marker based on v3.4
 APP_TITLE = "PDF Table Extractor Pro"
 SUPPORT_EMAIL = "lovinquesaba17@gmail.com"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -62,94 +63,101 @@ DEFAULT_TRANSLATE_LANG_NAME = "English"
 db_config_app = Flask(__name__)
 DATABASE_URL = os.environ.get('DATABASE_URL')
 FLASK_SECRET_KEY = os.environ.get('FLASK_SECRET_KEY', 'default-secret-key-change-me')
-if not DATABASE_URL: st.error("FATAL ERROR: DATABASE_URL missing."); logging.critical("DATABASE_URL missing."); st.stop()
-if FLASK_SECRET_KEY == 'default-secret-key-change-me': logging.warning("Using default FLASK_SECRET_KEY.")
+if not DATABASE_URL: st.error("FATAL ERROR: DATABASE_URL missing."); log.critical("DATABASE_URL missing."); st.stop()
+if FLASK_SECRET_KEY == 'default-secret-key-change-me': log.warning("Using default FLASK_SECRET_KEY.")
 db_config_app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 db_config_app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {"pool_pre_ping": True, "pool_recycle": 300}
 db_config_app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db_config_app.config['SECRET_KEY'] = FLASK_SECRET_KEY
 db = None
-try: db = SQLAlchemy(db_config_app); logging.info("SQLAlchemy initialized.")
-except Exception as db_init_err: st.error("FATAL ERROR: DB initialization failed."); logging.critical(f"SQLAlchemy init failed: {db_init_err}", exc_info=True); st.stop()
+try: db = SQLAlchemy(db_config_app); log.info("SQLAlchemy initialized.")
+except Exception as db_init_err: st.error("FATAL ERROR: DB initialization failed."); log.critical(f"SQLAlchemy init failed: {db_init_err}", exc_info=True); st.stop()
 
 # === Password Hashing Context ===
-try: pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto"); logging.info("Passlib context initialized.")
-except Exception as pwd_err: st.error("FATAL ERROR: Security component failed."); logging.critical(f"Passlib init failed: {pwd_err}", exc_info=True); st.stop()
+try: pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto"); log.info("Passlib context initialized.")
+except Exception as pwd_err: st.error("FATAL ERROR: Security component failed."); log.critical(f"Passlib init failed: {pwd_err}", exc_info=True); st.stop()
 
 # === Database Model ===
+# NOTE: This script version *does not* include db.create_all().
+# It assumes the 'users' table already exists in the database.
 if db:
     class User(db.Model):
         id = db.Column(db.Integer, primary_key=True); email = db.Column(db.String(120), unique=True, nullable=False, index=True); password_hash = db.Column(db.String(128), nullable=False); credits = db.Column(db.Integer, nullable=False, default=100); created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)); last_login_at = db.Column(db.DateTime(timezone=True), nullable=True)
         def check_password(self, password: str) -> bool:
             try:
-                if not isinstance(self.password_hash, str): logging.warning(f"Hash not string for {self.email}."); return False
+                if not isinstance(self.password_hash, str): log.warning(f"Hash not string for {self.email}."); return False
                 return pwd_context.verify(password, self.password_hash)
-            except Exception as e: logging.error(f"Password check error for {self.email}: {e}", exc_info=True); return False
+            except Exception as e: log.error(f"Password check error for {self.email}: {e}", exc_info=True); return False
         def __repr__(self): return f'<User {self.email} (Credits: {self.credits})>'
-else: st.error("DB connection failed earlier."); logging.critical("Skipping User model def."); st.stop()
+else: st.error("DB connection failed earlier."); log.critical("Skipping User model def."); st.stop()
 
 # === JSON File Utilities (Only for Trial Data) ===
 def load_json(filepath: str) -> Dict[str, Any]:
     """Loads trial data from JSON file"""
     try:
-        if not os.path.exists(filepath): logging.warning(f"Trial file {filepath} missing, creating."); f = open(filepath, "w", encoding='utf-8'); json.dump({}, f); f.close(); return {}
+        if not os.path.exists(filepath): log.warning(f"Trial file {filepath} missing, creating."); f = open(filepath, "w", encoding='utf-8'); json.dump({}, f); f.close(); return {}
         with open(filepath, "r", encoding='utf-8') as f: data = json.load(f)
-        if not isinstance(data, dict): logging.error(f"Trial file {filepath} invalid content."); return {}
+        if not isinstance(data, dict): log.error(f"Trial file {filepath} invalid content."); return {}
         return data
-    except json.JSONDecodeError as json_err: logging.error(f"Trial file {filepath} decode error: {json_err}."); return {}
-    except Exception as e: logging.error(f"Load trial JSON {filepath} error: {e}", exc_info=True); return {}
+    except json.JSONDecodeError as json_err: log.error(f"Trial file {filepath} decode error: {json_err}."); return {}
+    except Exception as e: log.error(f"Load trial JSON {filepath} error: {e}", exc_info=True); return {}
 def save_json(filepath: str, data: Dict[str, Any]) -> None:
     """Saves trial data to JSON file"""
     try:
         with open(filepath, "w", encoding='utf-8') as f: json.dump(data, f, indent=2, ensure_ascii=False)
-    except Exception as e: logging.error(f"Save trial JSON {filepath} error: {e}", exc_info=True); st.warning("Could not save trial usage.")
+    except Exception as e: log.error(f"Save trial JSON {filepath} error: {e}", exc_info=True); st.warning("Could not save trial usage.")
 
 # === Authentication Functions (DB Based) ===
 def authenticate_user_db(email: str, password: str) -> Optional[Dict[str, Any]]:
     """Verifies user credentials against the database."""
-    if not email or not password: logging.warning("Auth attempt empty email/pass."); return None
-    logging.info(f"Attempting DB auth for: {email}")
+    if not email or not password: log.warning("Auth attempt empty email/pass."); return None
+    log.info(f"Attempting DB auth for: {email}")
     try:
         with db_config_app.app_context():
+            # This query will fail if the 'users' table doesn't exist
             user = db.session.query(User).filter(db.func.lower(User.email) == email.lower()).first()
             if user and user.check_password(password):
-                logging.info(f"User '{email}' authenticated via DB.")
-                try: user.last_login_at = datetime.now(timezone.utc); db.session.commit(); logging.info(f"Updated last_login_at for {email}")
-                except Exception as update_err: db.session.rollback(); logging.warning(f"Could not update last_login_at for {email}: {update_err}", exc_info=True)
+                log.info(f"User '{email}' authenticated via DB.")
+                try: user.last_login_at = datetime.now(timezone.utc); db.session.commit(); log.info(f"Updated last_login_at for {email}")
+                except Exception as update_err: db.session.rollback(); log.warning(f"Could not update last_login_at for {email}: {update_err}", exc_info=True)
                 return {"email": user.email, "credits": user.credits}
-            elif user: logging.warning(f"DB Auth failed for '{email}': Invalid password."); return None
-            else: logging.warning(f"DB Auth failed for '{email}': User not found."); return None
-    except OperationalError as db_op_err: logging.error(f"DB OperationalError during auth for {email}: {db_op_err}", exc_info=True); st.error("Login failed: DB connection issue."); return None
-    except Exception as e: logging.error(f"Unexpected error during DB auth for {email}: {e}", exc_info=True); st.error("Login failed: Server error."); return None
+            elif user: log.warning(f"DB Auth failed for '{email}': Invalid password."); return None
+            else: log.warning(f"DB Auth failed for '{email}': User not found."); return None
+    except OperationalError as db_op_err:
+        # This will catch the "relation 'users' does not exist" error if table wasn't created
+        log.error(f"DB OperationalError during auth for {email}: {db_op_err}", exc_info=True)
+        st.error("Login failed: Database connection issue or setup incomplete.") # Modified error
+        return None
+    except Exception as e: log.error(f"Unexpected error during DB auth for {email}: {e}", exc_info=True); st.error("Login failed: Server error."); return None
 
 # === Session Initialization ===
 def initialize_user_session(user_data: Dict[str, Any]) -> bool:
     """Initializes Streamlit session state using DB data (for credits) and trial file."""
     try:
         email = user_data.get("email");
-        if not email: logging.error("Session init failed: email missing."); return False
+        if not email: log.error("Session init failed: email missing."); return False
         st.session_state.logged_in = True; st.session_state.user_email = email
         is_trial = (email.lower() == TRIAL_EMAIL.lower()); st.session_state.is_trial_user = is_trial
         if is_trial:
-            logging.info(f"Initializing session for TRIAL user: {email}")
+            log.info(f"Initializing session for TRIAL user: {email}")
             trial_data = load_json(TRIAL_FILE_PATH); today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             user_trial_info = trial_data.get(email, {"date": today_str, "uses": 0})
-            if user_trial_info.get("date") != today_str: logging.info(f"Resetting trial uses for {email} day {today_str}."); user_trial_info = {"date": today_str, "uses": 0}; trial_data[email] = user_trial_info; save_json(TRIAL_FILE_PATH, trial_data)
+            if user_trial_info.get("date") != today_str: log.info(f"Resetting trial uses for {email} day {today_str}."); user_trial_info = {"date": today_str, "uses": 0}; trial_data[email] = user_trial_info; save_json(TRIAL_FILE_PATH, trial_data)
             st.session_state.trial_uses_today = user_trial_info.get("uses", 0)
-            if st.session_state.trial_uses_today >= TRIAL_DAILY_LIMIT: st.error(f"Login failed: Trial limit reached."); logging.warning(f"Trial login blocked {email}, limit reached."); st.session_state.logged_in = False; return False
+            if st.session_state.trial_uses_today >= TRIAL_DAILY_LIMIT: st.error(f"Login failed: Trial limit reached."); log.warning(f"Trial login blocked {email}, limit reached."); st.session_state.logged_in = False; return False
             st.session_state.credits = float('inf')
         else:
-            logging.info(f"Initializing session for PAID user: {email}")
+            log.info(f"Initializing session for PAID user: {email}")
             st.session_state.credits = user_data.get("credits", 0); st.session_state.trial_uses_today = 0
-        logging.info(f"Session initialized. Trial: {is_trial}, Credits/Uses: {st.session_state.credits if not is_trial else st.session_state.trial_uses_today}")
+        log.info(f"Session initialized. Trial: {is_trial}, Credits/Uses: {st.session_state.credits if not is_trial else st.session_state.trial_uses_today}")
         return True
-    except Exception as e: logging.error(f"Session init error for {user_data.get('email', '??')}: {e}", exc_info=True); st.error("Session setup error."); return False
+    except Exception as e: log.error(f"Session init error for {user_data.get('email', '??')}: {e}", exc_info=True); st.error("Session setup error."); return False
 
 # === Usage Update ===
 def update_usage_count(user_email: str, is_trial: bool) -> None:
     """Updates usage counts: Decrements credits in DB for paid users, increments uses in JSON for trial."""
     if not user_email:
-        logging.error("Cannot update usage: user_email is missing.")
+        log.error("Cannot update usage: user_email is missing.")
         st.error("Error recording usage: Session data missing."); return
     try:
         if is_trial:
@@ -161,7 +169,7 @@ def update_usage_count(user_email: str, is_trial: bool) -> None:
             user_trial_info.update({"uses": current_uses, "date": today_str})
             trial_data[user_email] = user_trial_info
             save_json(TRIAL_FILE_PATH, trial_data)
-            logging.info(f"[Trial] Usage updated for {user_email}. Uses today: {current_uses}")
+            log.info(f"[Trial] Usage updated for {user_email}. Uses today: {current_uses}")
             st.toast(f"Trial use recorded ({current_uses}/{TRIAL_DAILY_LIMIT} today).", icon="⏳")
         else:
             with db_config_app.app_context():
@@ -170,34 +178,32 @@ def update_usage_count(user_email: str, is_trial: bool) -> None:
                     if user.credits > 0:
                         user.credits -= 1; db.session.commit()
                         st.session_state.credits = user.credits
-                        logging.info(f"[Premium] Credit deducted for {user_email}. Remaining: {user.credits}")
+                        log.info(f"[Premium] Credit deducted for {user_email}. Remaining: {user.credits}")
                         st.toast("1 credit deducted.", icon="🪙")
                     else:
-                        logging.warning(f"Attempted to deduct credit for {user_email}, but credits were already zero.")
+                        log.warning(f"Attempted to deduct credit for {user_email}, but credits were already zero.")
                         st.warning("Credit deduction skipped: Already at 0 credits.")
                 else:
-                    logging.error(f"Cannot update credits for {user_email}: User not found in database during usage update.")
+                    log.error(f"Cannot update credits for {user_email}: User not found in database during usage update.")
                     st.error("Error: Could not find user record to update credits.")
     except OperationalError as db_op_err:
          if not is_trial:
               try: # Attempt rollback safely
                   with db_config_app.app_context(): db.session.rollback()
-              except Exception as rb_err: logging.error(f"Rollback error: {rb_err}")
-         logging.error(f"Database OperationalError during usage update for {user_email}: {db_op_err}", exc_info=True)
+              except Exception as rb_err: log.error(f"Rollback error: {rb_err}")
+         log.error(f"Database OperationalError during usage update for {user_email}: {db_op_err}", exc_info=True)
          st.error("⚠️ Error connecting to database while updating usage count.")
     except Exception as e:
         # --- CORRECTED Nested Try/Except for Rollback ---
         if not is_trial:
              try:
-                 # Indent the code inside the nested try
                  with db_config_app.app_context():
                      db.session.rollback()
-                     logging.info(f"Rollback attempted for {user_email} due to usage update error.") # Optional: log success
+                     log.info(f"Rollback attempted for {user_email} due to usage update error.")
              except Exception as rb_err:
-                 # Indent the code inside the nested except
-                 logging.error(f"Rollback attempt itself failed for {user_email}: {rb_err}")
+                 log.error(f"Rollback attempt itself failed for {user_email}: {rb_err}")
         # --- END CORRECTION ---
-        logging.error(f"Failed to update usage count for {user_email} (Trial={is_trial}): {e}", exc_info=True)
+        log.error(f"Failed to update usage count for {user_email} (Trial={is_trial}): {e}", exc_info=True)
         st.error("⚠️ An unexpected error occurred while updating usage count.")
 
 # === Login UI ===
@@ -207,8 +213,8 @@ def display_login_form():
     try:
         logo_filepath = os.path.join(BASE_DIR, LOGO_PATH);
         if os.path.exists(logo_filepath): st.image(logo_filepath, width=150)
-        else: logging.info(f"Logo file {logo_filepath} not found.")
-    except Exception as logo_err: logging.warning(f"Could not load logo: {logo_err}")
+        else: log.info(f"Logo file {logo_filepath} not found.")
+    except Exception as logo_err: log.warning(f"Could not load logo: {logo_err}")
     st.title("PDF Table Data Extractor + Multi Language Translator"); st.markdown("Please log in.")
     _, col2, _ = st.columns([1, 1.5, 1])
     with col2:
@@ -216,13 +222,18 @@ def display_login_form():
             st.subheader("🔐 Secure Login"); email = st.text_input("Email Address", key="login_email").strip(); password = st.text_input("Password", type="password", key="login_password"); submitted = st.form_submit_button("Sign In", use_container_width=True)
             if submitted:
                 if not email or not password: st.warning("Enter email and password."); return False
-                user_data = authenticate_user_db(email, password)
+                user_data = authenticate_user_db(email, password) # This might return None if DB error occurs
                 if user_data:
                     if initialize_user_session(user_data): st.toast(f"Welcome back, {email}!", icon="🎉"); st.rerun()
                     else: st.session_state.logged_in = False; return False
                 else:
-                    if "last_login_at" not in st.session_state: st.error("❌ Invalid email or password.");
-                    logging.warning(f"Failed login attempt for email: {email}")
+                    # Generic error shown here if authenticate_user_db returned None (due to DB error or failed auth)
+                    # Specific DB error message is shown within authenticate_user_db now.
+                    if "last_auth_error_time" not in st.session_state or \
+                       (datetime.now() - st.session_state.last_auth_error_time).total_seconds() > 2:
+                         st.error("❌ Invalid email or password, or login service unavailable.")
+                         st.session_state.last_auth_error_time = datetime.now()
+                    log.warning(f"Failed login attempt for email: {email}")
                     return False
     return False
 
@@ -241,7 +252,7 @@ with st.sidebar:
         # st.link_button("Buy Credits", "YOUR_LINK", use_container_width=True)
     st.divider(); st.markdown("### 🔐 Session")
     if st.button("Log Out", use_container_width=True, key="logout_button"):
-        logging.info(f"User logged out: {user_email}"); keys_to_clear = ["logged_in", "user_email", "is_trial_user", "credits", "trial_uses_today"]
+        log.info(f"User logged out: {user_email}"); keys_to_clear = ["logged_in", "user_email", "is_trial_user", "credits", "trial_uses_today"]
         for key in keys_to_clear:
             if key in st.session_state: del st.session_state[key]
         st.session_state.logged_in = False; st.toast("Logged out.", icon="👋"); st.rerun()
@@ -268,21 +279,35 @@ if uploaded_file:
         st.markdown("🌍 **Translation (Optional)**"); enable_translation = st.checkbox("Translate?", key="translate_cb", value=False); selected_lang_code = None; target_lang_name = None
         if enable_translation:
             full_language_names = {k: v.title() for k, v in SUPPORTED_LANGUAGES.items()}; lang_code_to_name = {v: k for k, v in full_language_names.items()}; sorted_lang_names = sorted(full_language_names.values())
-            try: default_index = sorted_lang_names.index(DEFAULT_TRANSLATE_LANG_NAME)
-            except ValueError: default_index = 0
+            try: default_index = sorted_lang_names.index(DEFAULT_TRANSLATE_LANG_NAME.title()) # Ensure title case match
+            except ValueError: default_index = 0; log.warning(f"Default language '{DEFAULT_TRANSLATE_LANG_NAME}' not in list.")
             selected_lang_name = st.selectbox("Target language:", sorted_lang_names, index=default_index, key="lang_select")
             selected_lang_code = lang_code_to_name.get(selected_lang_name)
             if selected_lang_code: target_lang_name = selected_lang_name; st.info(f"Translate to **{selected_lang_name}**.", icon="ℹ️")
-            else: st.warning("Lang not found, disabling translation."); enable_translation = False
-    with st.expander("🔧 Advanced PDF Parsing Settings (Optional)"):
-        st.markdown("Adjust if default results inconsistent."); camelot_flavor = st.selectbox( "Parsing Method", ['stream', 'lattice'], index=0, help="'stream' vs 'lattice'."); st.caption("_Tolerances apply only to 'stream'._")
+            else: st.warning("Lang not found, disabling translation."); log.error(f"Code not found for lang: {selected_lang_name}"); enable_translation = False
+
+    # --- Advanced Options Expander --- MODIFIED ---
+    with st.expander("🔧 Advanced Extraction Settings (Optional)"):
+        # Removed the flavor selectbox
+        st.markdown("Adjust tolerance settings to fine-tune table detection (especially useful if rows or columns are merged/split incorrectly).")
+        # Removed the caption about tolerances applying only to stream
         c1, c2 = st.columns(2)
-        with c1: edge_tolerance = st.slider("Edge Tol (Stream)", 0, 1000, 200, step=50, help="Page edge distance.")
-        with c2: row_tolerance = st.slider( "Row Tol (Stream)", 0, 50, 10, step=1, help="Vertical text grouping.")
+        with c1:
+            edge_tolerance = st.slider(
+                "Edge Tolerance", 0, 1000, 200, step=50, # Keep slider
+                help="Distance from page edges (points) to ignore. Increase if content near edges is missed."
+            )
+        with c2:
+             row_tolerance = st.slider(
+                 "Row Tolerance", 0, 50, 10, step=1, # Keep slider
+                 help="Vertical distance (points) to group text lines into rows. Increase if rows are incorrectly split."
+             )
+    # --- END MODIFICATION ---
     st.divider()
 
     # --- Step 3: Process ---
     st.subheader("3. Process and Download"); process_button_label = f"🚀 Extract '{pages_to_process}' Pages"
+    if enable_translation and target_lang_name: process_button_label += f" & Translate to {target_lang_name}" # Add translation info
     if st.button(process_button_label, key="process_button", type="primary", use_container_width=True):
         process_allowed = True; user_email = st.session_state.get("user_email"); is_trial = st.session_state.get("is_trial_user", False)
         if not user_email: st.error("Session error."); process_allowed = False
@@ -295,18 +320,19 @@ if uploaded_file:
         start_time = datetime.now()
 
         # --- Helper Functions (Exact copies from working script v1.9) ---
-        @st.cache_data(show_spinner=False)
+        @st.cache_data(show_spinner=False, ttl=3600) # Added ttl
         def translate_text(text, target_lang):
             original_text = str(text).strip();
             if not original_text: return original_text
+            detected_lang = None
             try: detected_lang = detect(original_text);
             except LangDetectException: pass
-            except Exception as detect_err_inner: logging.warning(f"Inner lang detect error: {detect_err_inner}"); pass
-            if 'detected_lang' in locals() and detected_lang == target_lang: return original_text
+            except Exception as detect_err_inner: log.warning(f"Inner lang detect error: {detect_err_inner}"); pass
+            if detected_lang and detected_lang == target_lang: return original_text
             try: translated = GoogleTranslator(source='auto', target=target_lang).translate(original_text); return translated if translated else original_text
-            except Exception as e: logging.warning(f"Translate fail: '{original_text[:30]}...'. Err: {e}"); return original_text
-        def translate_df_silent(df, target_lang):
-             if target_lang: return df.copy().applymap(lambda x: translate_text(x, target_lang)) # Uses applymap
+            except Exception as e: log.warning(f"Translate fail: '{original_text[:30]}...'. Err: {e}"); return original_text
+        def translate_df_applymap(df, target_lang): # Renamed
+             if target_lang: return df.copy().applymap(lambda x: translate_text(x, target_lang) if pd.notna(x) else x) # Use applymap
              return df
         def split_merged_rows(df):
             new_rows = []; df = df.fillna(''); cols = df.columns
@@ -318,16 +344,29 @@ if uploaded_file:
                     except ValueError: max_len = 0
                     for i in range(max_len): new_rows.append([p[i] if i < len(p) else '' for p in parts])
                 else: new_rows.append(row_list)
-            return pd.DataFrame(new_rows, columns=cols)
+            return pd.DataFrame(new_rows, columns=cols) if new_rows else pd.DataFrame(columns=cols)
         # --- End Helpers ---
 
         try: # Main processing try block
             status_placeholder.info(f"⏳ Reading PDF (Pages: {pages_to_process})..."); progress_bar.progress(0.05, text="Reading PDF...")
-            camelot_kwargs = {"pages": pages_to_process.lower(), "flavor": camelot_flavor, "strip_text": '\n'}
-            if camelot_flavor == 'stream': camelot_kwargs['edge_tol'] = edge_tolerance; camelot_kwargs['row_tol'] = row_tolerance
+
+            # --- MODIFIED: Hardcode flavor to 'stream' and include tolerances ---
+            camelot_kwargs = {
+                "pages": pages_to_process.lower(),
+                "flavor": "stream", # Force stream
+                "strip_text": '\n',
+                "edge_tol": edge_tolerance, # Pass the value from the slider
+                "row_tol": row_tolerance    # Pass the value from the slider
+            }
+            # --- END MODIFICATION ---
+
+            log.info(f"Calling Camelot (Flavor: stream, Pages: {pages_to_process})") # Log forced flavor
             tables = camelot.read_pdf(uploaded_file, **camelot_kwargs)
-            logging.info(f"Camelot found {len(tables)} tables (pg: {pages_to_process}, flav: {camelot_flavor}).")
-            if not tables: status_placeholder.warning(f"⚠️ No tables detected (pg='{pages_to_process}', flav='{camelot_flavor}')."); st.stop()
+
+            log.info(f"Camelot found {len(tables)} tables.") # Removed flavor from log
+            if not tables:
+                status_placeholder.warning(f"⚠️ No tables detected on pages '{pages_to_process}'. Try adjusting pages or tolerance settings.") # Adjusted message
+                st.stop()
 
             total_tables = len(tables); status_placeholder.info(f"✅ Found {total_tables} tables. Preparing Excel..."); progress_bar.progress(0.1, text=f"Found {total_tables} tables...")
             output_buffer = BytesIO(); processed_sheets = []; table_counts_per_page = {}; has_content = False
@@ -338,22 +377,23 @@ if uploaded_file:
                     base_sheet_name = f"Page_{page_num}_Table_{table_num_on_page}"
                     # Sheet name generation loop (fixed in v3.3)
                     sheet_name_candidate = base_sheet_name[:MAX_SHEET_NAME_LEN]; count = 1; temp_sheet_name = sheet_name_candidate
-                    while temp_sheet_name.lower() in [name.lower() for name in processed_sheets]:
+                    processed_lower = [name.lower() for name in processed_sheets]
+                    while temp_sheet_name.lower() in processed_lower:
                         suffix = f"_{count}"; max_base_len = MAX_SHEET_NAME_LEN - len(suffix)
-                        if max_base_len <= 0: temp_sheet_name = f"Sheet_Err_{i}"; logging.warning(f"Sheet name fallback: {base_sheet_name} -> {temp_sheet_name}"); break
+                        if max_base_len <= 0: temp_sheet_name = f"Sheet_Err_{i}"; log.warning(f"Sheet name fallback: {base_sheet_name} -> {temp_sheet_name}"); break
                         temp_sheet_name = base_sheet_name[:max_base_len] + suffix; count += 1
-                        if count > 100: logging.error(f"Unique sheet name fail: '{base_sheet_name}'"); temp_sheet_name = f"Sheet_Err_{i}"; break
+                        if count > 100: log.error(f"Unique sheet name fail: '{base_sheet_name}'"); temp_sheet_name = f"Sheet_Err_{i}"; break
                     sheet_name = temp_sheet_name
 
                     status_placeholder.info(f"⚙️ Processing {sheet_name} ({i+1}/{total_tables})..."); progress_bar.progress(current_progress, text=f"Processing {sheet_name}...")
                     df = table.df
-                    if df.empty: logging.info(f"Skip empty table: {sheet_name}"); continue
+                    if df.empty: log.info(f"Skip empty table: {sheet_name}"); continue
                     try:
                         df.columns = [str(col).strip() for col in df.columns]; df = split_merged_rows(df); df = df.astype(str)
-                        if df.empty: logging.info(f"Table empty post-clean: {sheet_name}"); continue
+                        if df.empty: log.info(f"Table empty post-clean: {sheet_name}"); continue
                         has_content = True
-                        if selected_lang_code: df = translate_df_silent(df, selected_lang_code) # Uses applymap
-                    except Exception as clean_err: logging.error(f"Error clean/translate {sheet_name}: {clean_err}", exc_info=True); st.warning(f"⚠️ Skipped {sheet_name} due to error."); continue
+                        if selected_lang_code: df = translate_df_applymap(df, selected_lang_code) # Uses applymap function
+                    except Exception as clean_err: log.error(f"Error clean/translate {sheet_name}: {clean_err}", exc_info=True); st.warning(f"⚠️ Skipped {sheet_name} due to error."); continue
                     df.to_excel(writer, sheet_name=sheet_name, index=False); processed_sheets.append(sheet_name)
                 if not has_content: status_placeholder.warning("⚠️ No data extracted after cleaning."); st.stop()
 
@@ -364,14 +404,18 @@ if uploaded_file:
                     for row in ws.iter_rows():
                         for cell in row: cell.alignment = Alignment(wrap_text=True, vertical='top')
                     for col in ws.columns:
-                        max_length = 0; column_letter = col[0].column_letter
+                        max_length = 8; column_letter = col[0].column_letter # Min width
                         for cell in col:
-                            try: cell_str = str(cell.value); length = max(len(line) for line in cell_str.split('\n')) if cell.value and isinstance(cell.value, str) and '\n' in cell_str else len(cell_str)
+                            try:
+                                cell_str = str(cell.value)
+                                if cell.value and isinstance(cell.value, str) and '\n' in cell_str:
+                                    length = max(len(line) for line in cell_str.split('\n'))
+                                else: length = len(cell_str)
                             except: length = 0
                             if length > max_length: max_length = length
-                        adjusted_width = min(max((max_length + 2) * 1.1, 12), 60)
+                        adjusted_width = min(max((max_length + 2) * 1.1, 10), 70) # Clamp width
                         try: ws.column_dimensions[column_letter].width = adjusted_width
-                        except Exception as width_err: logging.warning(f"Width fail col {column_letter}: {width_err}")
+                        except Exception as width_err: log.warning(f"Width fail col {column_letter}: {width_err}")
 
             output_buffer.seek(0); end_time = datetime.now(); duration = end_time - start_time; progress_bar.progress(1.0, text="Complete!"); status_placeholder.success(f"✅ Success! Processed {len(processed_sheets)} tables in {duration.total_seconds():.1f}s.")
             download_filename = f"extracted_{os.path.splitext(uploaded_file.name)[0]}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
@@ -381,16 +425,32 @@ if uploaded_file:
             update_usage_count(user_email, is_trial) # Calls the function defined earlier
             # --- End Usage Update Call ---
 
-        # Error Handling
-        except ImportError: status_placeholder.error("❌ Lib missing."); logging.error("ImportError."); st.stop()
-        except Exception as e:
-            if "edge_tol,row_tol cannot be used with flavor='lattice'" in str(e): status_placeholder.error("❌ Config Error: Tolerances incompatible with 'lattice'."); logging.error(f"Config error: {e}")
-            elif "relation \"user\" does not exist" in str(e).lower(): status_placeholder.error("❌ DB Error: User table missing."); logging.critical("DB schema error: 'user' missing.", exc_info=True)
-            else: status_placeholder.error(f"❌ Unexpected processing error."); logging.error(f"Processing failed: {e}", exc_info=True)
+        # Error Handling --- MODIFIED ---
+        except MemoryError: # Explicitly catch MemoryError
+            status_placeholder.error(
+                "❌ Processing Failed: Ran out of memory. "
+                "This can happen with very large PDFs even using the 'stream' method. "
+                "Try processing fewer pages at a time."
+            )
+            log.error("MemoryError occurred during processing.", exc_info=True)
             st.stop()
+        except ImportError:
+            status_placeholder.error("❌ Lib missing."); log.error("ImportError."); st.stop()
+        except Exception as e:
+            # Removed lattice/tolerance check
+            if "relation \"user\" does not exist" in str(e).lower():
+                # This error suggests the DB table wasn't created manually or via another script
+                status_placeholder.error("❌ DB Error: User table missing. Database setup may be incomplete.");
+                log.critical("DB schema error: 'user' table missing.", exc_info=True)
+            elif "invalid pdf" in str(e).lower() or "file has not been decrypted" in str(e).lower():
+                 status_placeholder.error(f"❌ PDF Error: Cannot read the PDF file. It might be corrupted or password-protected."); log.error(f"PDF read error: {e}")
+            else:
+                status_placeholder.error(f"❌ Unexpected processing error: {type(e).__name__}"); log.error(f"Processing failed: {e}", exc_info=True)
+            st.stop()
+        # --- END MODIFICATION ---
 
 else: # No file uploaded
     st.info("👋 Welcome! Please upload PDF to start.")
 
 # --- Footer ---
-st.divider(); st.caption("© {} PDF Table Extractor Pro | Support: {}.".format(datetime.now().year, SUPPORT_EMAIL))
+st.divider(); st.caption("© {} PDF Table Extractor Pro | Version: {} | Support: {}.".format(datetime.now().year, APP_VERSION, SUPPORT_EMAIL))
